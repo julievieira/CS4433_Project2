@@ -9,5 +9,5 @@ recent_access_IDs = GROUP recent_access BY ByWho;
 pages_access = JOIN pages BY PersonID LEFT OUTER, recent_access_IDs BY group;
 no_access = FILTER pages_access BY recent_access_IDs::group is null;
 results = FOREACH no_access GENERATE PersonID, Name;
-STORE results INTO 'output_file_TaskG_2022-02-16' USING PigStorage(',');
+STORE results INTO 'output_file_TaskG' USING PigStorage(',');
 Dump results;
