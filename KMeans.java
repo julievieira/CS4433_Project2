@@ -91,8 +91,19 @@ public class KMeans {
             int aveY = sumY / count;
             newCentroids.put(0, aveX + ", " + aveY);
 
+            Path[] files = DistributedCache.getLocalCacheFiles(context.getConfiguration());
+            Path path = files[0];
+            // open the stream
+            FileSystem fs = FileSystem.get(context.getConfiguration());
+            if (fs.exists(path)) {
+                fs.delete(path, true); // true will delete recursively
+            }
+            FSDataOutputStream intermediateStream = fs.create(path);
+            intermediateStream.write(new String(newCentroids.get(0) + "\n").getBytes(StandardCharsets.UTF_8));
+            intermediateStream.close();
+
             // write new and old centroids to output file
-            context.write(new Text(aveX + ", " + aveY), new Text(oldCentroidX + ", " + oldCentroidY));
+            context.write(new Text(aveX + ", " + aveY), new Text(", Old centroid: " + oldCentroidX + ", " + oldCentroidY));
         }
     }
 
@@ -133,7 +144,28 @@ public class KMeans {
         }
         FileInputFormat.addInputPath(job, new Path("hdfs://localhost:9000/project2/points.txt"));
         FileOutputFormat.setOutputPath(job, new Path("hdfs://localhost:9000/project2/output"));
+
         boolean ret = job.waitForCompletion(true);
+
+        if (fs.exists(intermediatePath)) {
+            fs.delete(intermediatePath, true); // true will delete recursively
+        }
+        intermediateStream = fs.create(intermediatePath);
+        FSDataInputStream fis = fs.open(new Path("hdfs://localhost:9000/project2/output/part-r-00000"));
+        BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+        // read the record line by line
+        String line;
+        while (StringUtils.isNotEmpty(line = reader.readLine())) {
+            String[] lineArr = line.split(", ");
+            String newCentroidX = lineArr[0];
+            String newCentroidY = lineArr[1];
+            intermediateStream.write(new String(newCentroidX + "," + newCentroidY + "\n").getBytes(StandardCharsets.UTF_8));
+        }
+        // close the stream
+        intermediateStream.close();
+        IOUtils.closeStream(reader);
+        fs.close();
+
 
         long endTime = System.currentTimeMillis();
         System.out.println((endTime - startTime) / 1000.0 + " seconds");
