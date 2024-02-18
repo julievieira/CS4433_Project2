@@ -15,26 +15,21 @@ import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class KMeans {
-    public static class TokenizerMapper extends Mapper<Object, Text, Text, Text>{
-//        private java.util.Map<Integer, String> centroids = new HashMap<>();
-        private int total = 0;
-        private int num = 0;
+    public static class Map extends Mapper<Object, Text, Text, Text>{
         private java.util.Map<Integer, String> centroids = new HashMap<>();
 
         @Override
         protected void setup(Context context) throws IOException, InterruptedException {
-//            URI[] cacheFiles = context.getCacheFiles();
-//            Path path = new Path(cacheFiles[0]);
             Path[] files = DistributedCache.getLocalCacheFiles(context.getConfiguration());
             Path path = files[0];
             // open the stream
             FileSystem fs = FileSystem.get(context.getConfiguration());
             FSDataInputStream fis = fs.open(path);
-            // wrap it into a BufferedReader object which is easy to read a record
             BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
             // read the record line by line
             String line;
@@ -70,74 +65,44 @@ public class KMeans {
                 }
             }
             context.write(new Text( closestCentroidX + ", " + closestCentroidY), new Text(x + ", " + y));
-//            context.write(new Text(x + ", " + y), new Text(centroids.get(0)));
         }
     }
 
-//    public static class IntSumReducer extends Reducer<Text,IntWritable,Text,IntWritable> {
-//        private Map<String, IntWritable> accessPairs = new HashMap<>();
-//        private Map<String, IntWritable> distinct = new HashMap<>();
-//        private Map<String, IntWritable> total = new HashMap<>();
-//        private IntWritable resultPairs = new IntWritable();
-//        private HashMap visited = new HashMap<>();
-//
-//        public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-//            int distinct = 0;
-//            int sum = 0;
-//            String[] keyString = key.toString().split(",");
-//            String byWho = keyString[0];
-//            for (IntWritable val : values) {
-//                sum += val.get();
-//                if (!accessPairs.containsKey(key)) {
-//                    distinct += val.get();
-//                    accessPairs.put(key.toString(), new IntWritable(distinct));
-//                }
-//                total.put(key.toString(), new IntWritable(sum));
-//            }
-////            resultPairs.set(distinct);
-////            context.write(new Text(byWho), resultPairs);
-//        }
-//
-//        protected void cleanup(Context context) throws IOException, InterruptedException {
-//            for(Map.Entry<String, IntWritable> itr : accessPairs.entrySet()) {
-//                // account number
-//                String key = itr.getKey().toString().split(",")[0];
-//                // handle the total number of accesses
-//                if (!total.containsKey(key)) {
-//                    total.put(key, itr.getValue());
-//                } else {
-//                    IntWritable currentVal = total.get(key);
-//                    IntWritable addVal = itr.getValue();
-//                    IntWritable newVal = new IntWritable(currentVal.get() + addVal.get());
-//                    total.replace(key, newVal);
-//                }
-//                // handle the number of distinct accesses
-//                if (!distinct.containsKey(key)) {
-//                    distinct.put(key, itr.getValue());
-//                } else {
-//                    IntWritable currentVal = distinct.get(key);
-//                    IntWritable addVal = new IntWritable(1);
-//                    IntWritable newVal = new IntWritable(currentVal.get() + addVal.get());
-//                    distinct.replace(key, newVal);
-//                }
-//            }
-//            for(Map.Entry<String, IntWritable> itr : accessPairs.entrySet()){
-//                String key = itr.getKey().toString().split(",")[0];
-//                if(!visited.containsKey(key)){
-//                    context.write(new Text("Person ID: " + key + ", Total Accesses: " + total.get(key) + ", # Distinct Accesses: "), distinct.get(key));
-//                    visited.put(key, 1);
-//                }
-//            }
-//        }
-//    }
+    public static class Reduce extends Reducer<Text,Text,Text,Text> {
+        private java.util.Map<Integer, String> newCentroids = new HashMap<>();
+
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            int sumX = 0;
+            int sumY = 0;
+            int count = 0;
+            String[] keyString = key.toString().split(", ");
+            int oldCentroidX = Integer.parseInt(keyString[0]);
+            int oldCentroidY = Integer.parseInt(keyString[1]);
+
+            for (Text val : values) {
+                String[] valString = val.toString().split(", ");
+                int pointX = Integer.parseInt(valString[0]);
+                int pointY = Integer.parseInt(valString[1]);
+                sumX += pointX;
+                sumY += pointY;
+                count++;
+            }
+            int aveX = sumX / count;
+            int aveY = sumY / count;
+            newCentroids.put(0, aveX + ", " + aveY);
+
+            // write new and old centroids to output file
+            context.write(new Text(aveX + ", " + aveY), new Text(oldCentroidX + ", " + oldCentroidY));
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         long startTime = System.currentTimeMillis();
         Configuration conf = new Configuration();
         Job job = Job.getInstance(conf, "KMeans");
         job.setJarByClass(KMeans.class);
-        job.setMapperClass(TokenizerMapper.class);
-//        job.setReducerClass(IntSumReducer.class);
+        job.setMapperClass(Map.class);
+        job.setReducerClass(Reduce.class);
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
@@ -156,6 +121,7 @@ public class KMeans {
             int randY = (int) (Math.random() * 5000);
             intermediateStream.write(new String(randX + "," + randY + "\n").getBytes(StandardCharsets.UTF_8));
         }
+        // close the stream so we can use the new centroids we just created
         intermediateStream.close();
 
         // Configure the DistributedCache
