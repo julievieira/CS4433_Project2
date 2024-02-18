@@ -108,6 +108,27 @@ public class KMeans {
     }
 
     public static void main(String[] args) throws Exception {
+        // hardcoded variables
+        int numCentroids = 3; // assuming we are given number of centroids
+        int minPoint = 0; // assuming points cannot have X or Y < 0 (for centroid creation)
+        int maxPoint = 5000; // assuming points cannot have X or Y > 5000 (for centroid creation)
+        int r = 1; // R value for the number of iterations we are using
+
+        // inputPath reads in the points.txt file we created
+        Path inputPath = new Path("hdfs://localhost:9000/project2/points.txt");
+        // outputPathString is the location of the final output of the centroids
+        String outputPathString = "hdfs://localhost:9000/project2/output";
+        // outputPathFile is the part-r-00000 file generated for final output
+        String outputPathFileString = outputPathString + "/part-r-00000";
+        // intermediatePath creates a new centroids.csv file that acts to store the updated
+        // centroids in each iteration to be stored in the distributed cache
+        String intermediatePathString = "hdfs://localhost:9000/project2/centroids.csv";
+
+        // Paths
+        Path intermediatePath = new Path(intermediatePathString);
+        Path outputPath = new Path(outputPathString);
+        Path outputPathFile = new Path(outputPathFileString);
+
         long startTime = System.currentTimeMillis();
         Configuration conf = new Configuration();
         Job job = Job.getInstance(conf, "KMeans");
@@ -117,53 +138,54 @@ public class KMeans {
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
-        // Delete the output directory if it exists
-        Path outputPath = new Path("hdfs://localhost:9000/project2/output");
-        Path intermediatePath = new Path("hdfs://localhost:9000/project2/centroids.csv");
-        FileSystem fs = outputPath.getFileSystem(conf);
 
+        FileSystem fs = outputPath.getFileSystem(conf);
+        // Delete the output directory if it exists
         if (fs.exists(intermediatePath)) {
             fs.delete(intermediatePath, true); // true will delete recursively
         }
         FSDataOutputStream intermediateStream = fs.create(intermediatePath);
-        int numCentroids = 3;
         for(int i = 0; i < numCentroids; i++){
-            int randX = (int) (Math.random() * 5000);
-            int randY = (int) (Math.random() * 5000);
+            int randX = (int) (Math.random() * maxPoint) + minPoint;
+            int randY = (int) (Math.random() * maxPoint) + minPoint;
             intermediateStream.write(new String(randX + "," + randY + "\n").getBytes(StandardCharsets.UTF_8));
         }
         // close the stream so we can use the new centroids we just created
         intermediateStream.close();
 
         // Configure the DistributedCache
-        DistributedCache.addCacheFile(new Path("hdfs://localhost:9000/project2/centroids.csv").toUri(), job.getConfiguration());
-        DistributedCache.setLocalFiles(job.getConfiguration(), "hdfs://localhost:9000/project2/centroids.csv");
+        DistributedCache.addCacheFile(intermediatePath.toUri(), job.getConfiguration());
+        DistributedCache.setLocalFiles(job.getConfiguration(), intermediatePathString);
 
-        if (fs.exists(outputPath)) {
-            fs.delete(outputPath, true); // true will delete recursively
-        }
-        FileInputFormat.addInputPath(job, new Path("hdfs://localhost:9000/project2/points.txt"));
-        FileOutputFormat.setOutputPath(job, new Path("hdfs://localhost:9000/project2/output"));
+        boolean ret = false;
+        for(int i = 0; i < r; i++) {
+            if (fs.exists(outputPath)) {
+                fs.delete(outputPath, true); // true will delete recursively
+            }
+            FileInputFormat.addInputPath(job, inputPath);
+            FileOutputFormat.setOutputPath(job, outputPath);
 
-        boolean ret = job.waitForCompletion(true);
+            ret = job.waitForCompletion(true);
 
-        if (fs.exists(intermediatePath)) {
-            fs.delete(intermediatePath, true); // true will delete recursively
+            if (fs.exists(intermediatePath)) {
+                fs.delete(intermediatePath, true); // true will delete recursively
+            }
+            intermediateStream = fs.create(intermediatePath);
+            FSDataInputStream fis = fs.open(outputPathFile);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+            // read the record line by line
+            String line;
+            while (StringUtils.isNotEmpty(line = reader.readLine())) {
+                String[] lineArr = line.split(", ");
+                String newCentroidX = lineArr[0];
+                String newCentroidY = lineArr[1];
+                intermediateStream.write(new String(newCentroidX + "," + newCentroidY + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            // close the stream
+            intermediateStream.close();
+            IOUtils.closeStream(reader);
+            job = Job.getInstance(conf, "KMeans");
         }
-        intermediateStream = fs.create(intermediatePath);
-        FSDataInputStream fis = fs.open(new Path("hdfs://localhost:9000/project2/output/part-r-00000"));
-        BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
-        // read the record line by line
-        String line;
-        while (StringUtils.isNotEmpty(line = reader.readLine())) {
-            String[] lineArr = line.split(", ");
-            String newCentroidX = lineArr[0];
-            String newCentroidY = lineArr[1];
-            intermediateStream.write(new String(newCentroidX + "," + newCentroidY + "\n").getBytes(StandardCharsets.UTF_8));
-        }
-        // close the stream
-        intermediateStream.close();
-        IOUtils.closeStream(reader);
         fs.close();
 
 
