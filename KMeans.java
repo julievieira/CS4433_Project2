@@ -150,8 +150,8 @@ public class KMeans {
             fs.delete(intermediatePath, true); // true will delete recursively
         }
         FSDataOutputStream intermediateStream = fs.create(intermediatePath);
-        int r = 3;
-        for(int i = 0; i < r; i++){
+        int numCentroids = 3;
+        for(int i = 0; i < numCentroids; i++){
             int randX = (int) (Math.random() * 5000);
             int randY = (int) (Math.random() * 5000);
             intermediateStream.write(new String(randX + "," + randY + "\n").getBytes(StandardCharsets.UTF_8));
