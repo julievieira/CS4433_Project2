@@ -65,14 +65,11 @@ public class KMeans {
                     minDistance = distance;
                 }
             }
-            context.write(new Text( closestCentroidX + ", " + closestCentroidY), new Text(x + ", " + y));
+            context.write(new Text( closestCentroidX + ", " + closestCentroidY), new Text(x + ", " + y + "," + 1));
         }
     }
 
-    public static class Reduce extends Reducer<Text,Text,Text,Text> {
-        private java.util.Map<Integer, String> newCentroids = new HashMap<>();
-        private java.util.Map<Integer, String> oldCentroids = new HashMap<>();
-        int index = 0;
+    public static class Combiner extends Reducer<Text,Text,Text,Text> {
 
         public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
             int sumX = 0;
@@ -90,27 +87,34 @@ public class KMeans {
                 sumY += pointY;
                 count++;
             }
-            oldCentroids.put(index, oldCentroidX + "," + oldCentroidY + "," + sumX + "," + sumY + "," + count);
-            index++;
+            context.write(new Text( oldCentroidX + ", " + oldCentroidY), new Text(sumX + ", " + sumY + "," + count));
         }
+    }
 
-        protected void cleanup(Context context) throws IOException, InterruptedException {
-            for(int i = 0; i < oldCentroids.size(); i++){
-                String[] centroidInfo = oldCentroids.get(i).split(",");
-                int oldCentroidX = Integer.parseInt(centroidInfo[0]);
-                int oldCentroidY = Integer.parseInt(centroidInfo[1]);
-                int sumX = Integer.parseInt(centroidInfo[2]);
-                int sumY = Integer.parseInt(centroidInfo[3]);
-                int count = Integer.parseInt(centroidInfo[4]);
-                int aveX = sumX / count;
-                int aveY = sumY / count;
-                newCentroids.put(i, aveX + ", " + aveY);
-                System.out.println("New centroid: " + aveX + ", " + aveY + ", Old centroid: " + oldCentroidX + ", " + oldCentroidY);
-                // write new and old centroids to output file
-                context.write(new Text(aveX + ", " + aveY), new Text(", Old centroid: " + oldCentroidX + ", " + oldCentroidY));
+    public static class Reduce extends Reducer<Text,Text,Text,Text> {
+
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            int sumX = 0;
+            int sumY = 0;
+            int count = 0;
+            String[] keyString = key.toString().split(",");
+            int oldCentroidX = Integer.parseInt(keyString[0].replaceAll("\\s", ""));
+            int oldCentroidY = Integer.parseInt(keyString[1].replaceAll("\\s", ""));
+
+            for (Text val : values) {
+                String[] valString = val.toString().split(",");
+                int pointX = Integer.parseInt(valString[0].replaceAll("\\s", ""));
+                int pointY = Integer.parseInt(valString[1].replaceAll("\\s", ""));
+                sumX += pointX;
+                sumY += pointY;
+                count += Integer.parseInt(valString[2].replaceAll("\\s", ""));
             }
+            int aveX = sumX / count;
+            int aveY = sumY / count;
+            System.out.println("New centroid: " + aveX + ", " + aveY + ", Old centroid: " + oldCentroidX + ", " + oldCentroidY);
+            // write new and old centroids to output file
+            context.write(new Text(aveX + ", " + aveY), new Text(", Old centroid: " + oldCentroidX + ", " + oldCentroidY));
         }
-
     }
 
     public static void main(String[] args) throws Exception {
@@ -120,9 +124,12 @@ public class KMeans {
         int maxPoint = 5000; // assuming points cannot have X or Y > 5000 (for centroid creation)
         int r = 20; // R value for the number of iterations we are using
         int threshold = 10; // used to determine if difference b/w old & new centroid X & Y is close enough to terminate process
-
+        int k = 1000; // value to generate k points and upload to HDFS
         // inputPath reads in the points.txt file we created
-        Path inputPath = new Path("hdfs://localhost:9000/project2/points.txt");
+        Path inputPathPredetermined = new Path("hdfs://localhost:9000/project2/points.txt");
+        Path inputPathGenerated = new Path("hdfs://localhost:9000/project2/pointsGenerated.txt");
+        // if generated = true, then a new file of k points will be created; otherwise points.txt will be used
+        boolean generated = true;
         // outputPathString is the location of the final output of the centroids
         String outputPathString = "hdfs://localhost:9000/project2/output";
         // outputPathFile is the part-r-00000 file generated for final output
@@ -135,11 +142,31 @@ public class KMeans {
         Path intermediatePath = new Path(intermediatePathString);
         Path outputPath = new Path(outputPathString);
         Path outputPathFile = new Path(outputPathFileString);
+        Path inputPath = inputPathPredetermined;
+        if(generated){
+            inputPath = inputPathGenerated;
+        }
 
         long startTime = System.currentTimeMillis();
         Configuration confIP = new Configuration();
 
         FileSystem fs = outputPath.getFileSystem(confIP);
+
+        // if input file need to generate points, do so here
+        if(generated){
+            if(fs.exists(inputPath)){
+                fs.delete(inputPath, true);
+            }
+            FSDataOutputStream inputStream = fs.create(inputPath);
+            for(int i = 0; i < k; i++){
+                int randX = (int) (Math.random() * maxPoint) + minPoint;
+                int randY = (int) (Math.random() * maxPoint) + minPoint;
+                inputStream.write(new String(randX + "," + randY + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            // close the stream so we can use the new centroids we just created
+            inputStream.close();
+        }
+
         // Delete the output directory if it exists
         if (fs.exists(intermediatePath)) {
             fs.delete(intermediatePath, true); // true will delete recursively
@@ -164,7 +191,7 @@ public class KMeans {
             Job job = Job.getInstance(conf, "KMeans");
             job.setJarByClass(KMeans.class);
             job.setMapperClass(Map.class);
-//            job.setCombinerClass(Reduce.class);
+            job.setCombinerClass(Combiner.class);
             job.setReducerClass(Reduce.class);
             job.setOutputKeyClass(Text.class);
             job.setOutputValueClass(Text.class);
