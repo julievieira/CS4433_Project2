@@ -92,17 +92,6 @@ public class KMeans {
             int aveY = sumY / count;
             newCentroids.put(0, aveX + ", " + aveY);
 
-            Path[] files = DistributedCache.getLocalCacheFiles(context.getConfiguration());
-            Path path = files[0];
-            // open the stream
-            FileSystem fs = FileSystem.get(context.getConfiguration());
-            if (fs.exists(path)) {
-                fs.delete(path, true); // true will delete recursively
-            }
-            FSDataOutputStream intermediateStream = fs.create(path);
-            intermediateStream.write(new String(newCentroids.get(0) + "\n").getBytes(StandardCharsets.UTF_8));
-            intermediateStream.close();
-
             System.out.println("New centroid: " + aveX + ", " + aveY + ", Old centroid: " + oldCentroidX + ", " + oldCentroidY);
             // write new and old centroids to output file
             context.write(new Text(aveX + ", " + aveY), new Text(", Old centroid: " + oldCentroidX + ", " + oldCentroidY));
