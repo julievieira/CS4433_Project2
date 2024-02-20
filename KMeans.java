@@ -71,31 +71,46 @@ public class KMeans {
 
     public static class Reduce extends Reducer<Text,Text,Text,Text> {
         private java.util.Map<Integer, String> newCentroids = new HashMap<>();
+        private java.util.Map<Integer, String> oldCentroids = new HashMap<>();
+        int index = 0;
 
         public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
             int sumX = 0;
             int sumY = 0;
             int count = 0;
-            String[] keyString = key.toString().split(", ");
-            int oldCentroidX = Integer.parseInt(keyString[0]);
-            int oldCentroidY = Integer.parseInt(keyString[1]);
+            String[] keyString = key.toString().split(",");
+            int oldCentroidX = Integer.parseInt(keyString[0].replaceAll("\\s", ""));
+            int oldCentroidY = Integer.parseInt(keyString[1].replaceAll("\\s", ""));
 
             for (Text val : values) {
-                String[] valString = val.toString().split(", ");
-                int pointX = Integer.parseInt(valString[0]);
-                int pointY = Integer.parseInt(valString[1]);
+                String[] valString = val.toString().split(",");
+                int pointX = Integer.parseInt(valString[0].replaceAll("\\s", ""));
+                int pointY = Integer.parseInt(valString[1].replaceAll("\\s", ""));
                 sumX += pointX;
                 sumY += pointY;
                 count++;
             }
-            int aveX = sumX / count;
-            int aveY = sumY / count;
-            newCentroids.put(0, aveX + ", " + aveY);
-
-            System.out.println("New centroid: " + aveX + ", " + aveY + ", Old centroid: " + oldCentroidX + ", " + oldCentroidY);
-            // write new and old centroids to output file
-            context.write(new Text(aveX + ", " + aveY), new Text(", Old centroid: " + oldCentroidX + ", " + oldCentroidY));
+            oldCentroids.put(index, oldCentroidX + "," + oldCentroidY + "," + sumX + "," + sumY + "," + count);
+            index++;
         }
+
+        protected void cleanup(Context context) throws IOException, InterruptedException {
+            for(int i = 0; i < oldCentroids.size(); i++){
+                String[] centroidInfo = oldCentroids.get(i).split(",");
+                int oldCentroidX = Integer.parseInt(centroidInfo[0]);
+                int oldCentroidY = Integer.parseInt(centroidInfo[1]);
+                int sumX = Integer.parseInt(centroidInfo[2]);
+                int sumY = Integer.parseInt(centroidInfo[3]);
+                int count = Integer.parseInt(centroidInfo[4]);
+                int aveX = sumX / count;
+                int aveY = sumY / count;
+                newCentroids.put(i, aveX + ", " + aveY);
+                System.out.println("New centroid: " + aveX + ", " + aveY + ", Old centroid: " + oldCentroidX + ", " + oldCentroidY);
+                // write new and old centroids to output file
+                context.write(new Text(aveX + ", " + aveY), new Text(", Old centroid: " + oldCentroidX + ", " + oldCentroidY));
+            }
+        }
+
     }
 
     public static void main(String[] args) throws Exception {
@@ -149,6 +164,7 @@ public class KMeans {
             Job job = Job.getInstance(conf, "KMeans");
             job.setJarByClass(KMeans.class);
             job.setMapperClass(Map.class);
+//            job.setCombinerClass(Reduce.class);
             job.setReducerClass(Reduce.class);
             job.setOutputKeyClass(Text.class);
             job.setOutputValueClass(Text.class);
