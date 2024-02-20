@@ -31,12 +31,15 @@ public class KMeansB {
             job.setOutputKeyClass(Text.class);
             job.setOutputValueClass(Text.class);
             FileOutputFormat.setOutputPath(job, new Path(outputPath));
-            if (i != (R - 1)) {
-                job.waitForCompletion(true);
-            }
-            else {
-                System.exit(job.waitForCompletion(true) ? 0 : 1);
-            }
+            job.waitForCompletion(true);
         }
+        Job job1 = Job.getInstance(conf, "KMeansFinal");
+        FileInputFormat.addInputPath(job1, new Path(points_inputPath));
+        job1.addCacheFile(new URI(args[2] + "iteration" + (R - 1) + "/part-r-00000"));
+        job1.setMapperClass(KMeans.KMeansMapper.class);
+        job1.setOutputKeyClass(Text.class);
+        job1.setOutputValueClass(Text.class);
+        FileOutputFormat.setOutputPath(job1, new Path(args[2] + "final_output"));
+        System.exit(job1.waitForCompletion(true) ? 0 : 1);
     }
 }

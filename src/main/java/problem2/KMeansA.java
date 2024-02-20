@@ -25,6 +25,16 @@ public class KMeansA {
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
         FileOutputFormat.setOutputPath(job, new Path(outputPath));
-        System.exit(job.waitForCompletion(true) ? 0 : 1);
+        job.waitForCompletion(true);
+
+        // final output job
+        Job job1 = Job.getInstance(conf, "KMeansFinal");
+        FileInputFormat.addInputPath(job1, new Path(points_inputPath));
+        job1.addCacheFile(new URI(args[2] + "part-r-00000"));
+        job1.setMapperClass(KMeans.KMeansMapper.class);
+        job1.setOutputKeyClass(Text.class);
+        job1.setOutputValueClass(Text.class);
+        FileOutputFormat.setOutputPath(job1, new Path(outputPath + "final_output"));
+        System.exit(job1.waitForCompletion(true) ? 0 : 1);
     }
 }
