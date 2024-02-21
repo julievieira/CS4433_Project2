@@ -30,10 +30,12 @@ public class KMeansA {
         // final output job
         Job job1 = Job.getInstance(conf, "KMeansFinal");
         FileInputFormat.addInputPath(job1, new Path(points_inputPath));
+        System.out.println(args[2] + "part-r-00000");
         job1.addCacheFile(new URI(args[2] + "part-r-00000"));
         job1.setMapperClass(KMeans.KMeansMapper.class);
         job1.setOutputKeyClass(Text.class);
         job1.setOutputValueClass(Text.class);
+        System.out.println(outputPath + "final_output");
         FileOutputFormat.setOutputPath(job1, new Path(outputPath + "final_output"));
         System.exit(job1.waitForCompletion(true) ? 0 : 1);
     }

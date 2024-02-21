@@ -29,7 +29,6 @@ public class randomPoints {
         }
 
         writer.close();
-        System.out.println("Points generated");
     }
 
     public static void main(String[] args) throws IOException {
@@ -39,6 +38,7 @@ public class randomPoints {
         String numOfPoints = args[2];
 
         generateRandom(Integer.parseInt(numOfPoints), fileName);
+        System.out.println(fileName + " generated in " + outputPath);
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(conf);
         fs.copyFromLocalFile(new Path(fileName), new Path(outputPath));

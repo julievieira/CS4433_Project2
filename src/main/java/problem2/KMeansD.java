@@ -148,13 +148,16 @@ public class KMeansD {
 
         Configuration conf = new Configuration();
         Job job = Job.getInstance(conf, "KMeans");
+        System.out.println(points_inputPath);
         FileInputFormat.addInputPath(job, new Path(points_inputPath));
+        System.out.println(seeds);
         job.addCacheFile(new URI(seeds));
         job.setMapperClass(KMeansMapper.class);
         job.setCombinerClass(KMeansCombiner.class);
         job.setReducerClass(KMeansReducer.class);
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
+        System.out.println(outputPath);
         FileOutputFormat.setOutputPath(job, new Path(outputPath));
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }

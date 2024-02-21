@@ -97,10 +97,12 @@ public class KMeansC {
         }
         Job job1 = Job.getInstance(conf, "KMeansFinal");
         FileInputFormat.addInputPath(job1, new Path(points_inputPath));
+        System.out.println(args[2] + "iteration" + latestInt + "/part-r-00000");
         job1.addCacheFile(new URI(args[2] + "iteration" + latestInt + "/part-r-00000"));
         job1.setMapperClass(KMeans.KMeansMapper.class);
         job1.setOutputKeyClass(Text.class);
         job1.setOutputValueClass(Text.class);
+        System.out.println(args[2] + "final_output");
         FileOutputFormat.setOutputPath(job1, new Path(args[2] + "final_output"));
         System.exit(job1.waitForCompletion(true) ? 0 : 1);
     }
