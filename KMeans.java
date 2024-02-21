@@ -3,6 +3,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Iterator;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -69,6 +70,55 @@ public class KMeans {
         }
     }
 
+    public static class MapReportClusters extends Mapper<Object, Text, Text, Text>{
+        private java.util.Map<Integer, String> centroids = new HashMap<>();
+
+        @Override
+        protected void setup(Context context) throws IOException, InterruptedException {
+            Path[] files = DistributedCache.getLocalCacheFiles(context.getConfiguration());
+            Path path = files[0];
+            // open the stream
+            FileSystem fs = FileSystem.get(context.getConfiguration());
+            FSDataInputStream fis = fs.open(path);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+            // read the record line by line
+            String line;
+            int index = 0;
+            while (StringUtils.isNotEmpty(line = reader.readLine())) {
+                centroids.put(index, line);
+                index++;
+            }
+            // close the stream
+            IOUtils.closeStream(reader);
+        }
+
+        public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            String[] accessInfo = value.toString().split(",");
+            int x = Integer.parseInt(accessInfo[0]);
+            int y = Integer.parseInt(accessInfo[1]);
+
+            double minDistance = Double.MAX_VALUE; // searching for minimum distance between point and centroid
+            String[] centroidStringArrInitial = centroids.get(0).split(",");
+            // parse the centroid integer values and remove any whitespace from the string
+            int closestCentroidX = Integer.parseInt(centroidStringArrInitial[0].replaceAll("\\s", ""));
+            int closestCentroidY = Integer.parseInt(centroidStringArrInitial[1].replaceAll("\\s", ""));
+            for(int i = 0; i < centroids.size(); i++){
+                String[] centroidStringArr = centroids.get(i).split(",");
+                int centroidX = Integer.parseInt(centroidStringArr[0].replaceAll("\\s", ""));
+                int centroidY = Integer.parseInt(centroidStringArr[1].replaceAll("\\s", ""));
+                int distanceX = x - centroidX;
+                int distanceY = y - centroidY;
+                double distance = Math.pow((Math.pow(distanceX, 2) + Math.pow(distanceY, 2)), 0.5);
+                if (distance < minDistance){
+                    closestCentroidX = centroidX;
+                    closestCentroidY = centroidY;
+                    minDistance = distance;
+                }
+            }
+            context.write(new Text( "Centroid: " + closestCentroidX + ", " + closestCentroidY), new Text("Point: " + x + ", " + y));
+        }
+    }
+
     public static class Combiner extends Reducer<Text,Text,Text,Text> {
 
         public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
@@ -117,19 +167,52 @@ public class KMeans {
         }
     }
 
+    // new Reducer class used to produce report of all points and corresponding clusters
+//    public static class ReduceReportClusters extends Reducer<Text,Text,Text,Text> {
+//
+//        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+//            int sumX = 0;
+//            int sumY = 0;
+//            int count = 0;
+//            for (Text val : values) {
+//                System.out.println(val);
+//                String[] valString = val.toString().split(",");
+//                int pointX = Integer.parseInt(valString[0].replaceAll("\\s", ""));
+//                int pointY = Integer.parseInt(valString[1].replaceAll("\\s", ""));
+//                sumX += pointX;
+//                sumY += pointY;
+//                count += Integer.parseInt(valString[2].replaceAll("\\s", ""));
+//            }
+//            int aveX = sumX / count;
+//            int aveY = sumY / count;
+//            // write new centroids to output file and all corresponding points
+//            while (valuesCopy.hasNext()){
+//                Text val = valuesCopy.next();
+//                System.out.println("Val 2: " + val);
+//                String[] valString = val.toString().split(",");
+//                int pointX = Integer.parseInt(valString[0].replaceAll("\\s", ""));
+//                int pointY = Integer.parseInt(valString[1].replaceAll("\\s", ""));
+//                System.out.println("Final Cluster: " + aveX + ", " + aveY + "; " + "Corresponding Point: " + pointX + ", " + pointY);
+//                context.write(new Text("Final Cluster: " + aveX + ", " + aveY), new Text(", Corresponding Point: " + pointX + ", " + pointY));
+//            }
+//        }
+//    }
+
     public static void main(String[] args) throws Exception {
         // hardcoded variables
         int numCentroids = 3; // assuming we are given number of centroids
         int minPoint = 0; // assuming points cannot have X or Y < 0 (for centroid creation)
         int maxPoint = 5000; // assuming points cannot have X or Y > 5000 (for centroid creation)
-        int r = 20; // R value for the number of iterations we are using
+        int r = 3; // R value for the number of iterations we are using
         int threshold = 10; // used to determine if difference b/w old & new centroid X & Y is close enough to terminate process
         int k = 1000; // value to generate k points and upload to HDFS
+        // if generated = true, then a new file of k points will be created; otherwise points.txt will be used
+        boolean generated = true;
+        boolean reportCentersAndConvergence = true; // true to report final centroids and whether convergence was achieved
+        boolean reportClusters = true; // true to report the final clusters (points and which centroid they belong to)
         // inputPath reads in the points.txt file we created
         Path inputPathPredetermined = new Path("hdfs://localhost:9000/project2/points.txt");
         Path inputPathGenerated = new Path("hdfs://localhost:9000/project2/pointsGenerated.txt");
-        // if generated = true, then a new file of k points will be created; otherwise points.txt will be used
-        boolean generated = true;
         // outputPathString is the location of the final output of the centroids
         String outputPathString = "hdfs://localhost:9000/project2/output";
         // outputPathFile is the part-r-00000 file generated for final output
@@ -137,12 +220,15 @@ public class KMeans {
         // intermediatePath creates a new centroids.csv file that acts to store the updated
         // centroids in each iteration to be stored in the distributed cache
         String intermediatePathString = "hdfs://localhost:9000/project2/centroids.csv";
+        // file to store which points belong to which centroid if reportCluster is true
+        String clusterString = "hdfs://localhost:9000/project2/clusters";
 
         // Paths
         Path intermediatePath = new Path(intermediatePathString);
         Path outputPath = new Path(outputPathString);
         Path outputPathFile = new Path(outputPathFileString);
         Path inputPath = inputPathPredetermined;
+        Path clusterPath = new Path(clusterString);
         if(generated){
             inputPath = inputPathGenerated;
         }
@@ -169,7 +255,7 @@ public class KMeans {
 
         // Delete the output directory if it exists
         if (fs.exists(intermediatePath)) {
-            fs.delete(intermediatePath, true); // true will delete recursively
+            fs.delete(intermediatePath, true);
         }
         FSDataOutputStream intermediateStream = fs.create(intermediatePath);
         for(int i = 0; i < numCentroids; i++){
@@ -181,10 +267,13 @@ public class KMeans {
         intermediateStream.close();
 
         boolean ret = false;
+        HashMap newCentroids = new HashMap();
+        HashMap oldCentroids = new HashMap();
+        boolean terminate = false;
         for(int i = 0; i < r; i++) {
             // use to compare the old and new centroids to the threshold
-            HashMap oldCentroids = new HashMap<>();
-            HashMap newCentroids = new HashMap();
+            oldCentroids = new HashMap<>();
+            newCentroids = new HashMap();
 
             System.out.println("Iteration: " + i);
             Configuration conf = new Configuration();
@@ -201,7 +290,7 @@ public class KMeans {
             DistributedCache.setLocalFiles(job.getConfiguration(), intermediatePathString);
 
             if (fs.exists(outputPath)) {
-                fs.delete(outputPath, true); // true will delete recursively
+                fs.delete(outputPath, true);
             }
             FileInputFormat.addInputPath(job, inputPath);
             FileOutputFormat.setOutputPath(job, outputPath);
@@ -209,7 +298,7 @@ public class KMeans {
             ret = job.waitForCompletion(true);
 
             if (fs.exists(intermediatePath)) {
-                fs.delete(intermediatePath, true); // true will delete recursively
+                fs.delete(intermediatePath, true);
             }
             intermediateStream = fs.create(intermediatePath);
             FSDataInputStream fis = fs.open(outputPathFile);
@@ -236,7 +325,7 @@ public class KMeans {
             // only using the threshold to compare the difference between the values we are calculating
             // assume we are going to terminate unless one of the centroid differences is still greater
             // than threshold; otherwise set i = r (current iteration = max iterations) to terminate
-            boolean terminate = false;
+            terminate = false;
             if(i > 0){
                 terminate = true;
                 for(int j = 0; j < oldCentroids.size(); j++){
@@ -262,9 +351,60 @@ public class KMeans {
             intermediateStream.close();
             IOUtils.closeStream(reader);
         }
+
+        if(reportCentersAndConvergence){
+            System.out.println();
+            System.out.println("Final Report:");
+            if(terminate){
+                System.out.println("Convergence was achieved");
+            }
+            else {
+                System.out.println("Convergence was not achieved");
+            }
+            for(int i = 0; i < newCentroids.size(); i++){
+                System.out.println(newCentroids.get(i));
+            }
+        }
+        System.out.println();
+
+        // report all final clusters and corresponding points by running map reduce using the last set
+        // of centroids found (therefore we are using the values that MapReduce terminated at)
+        // and writing them to a newly defined output file, defined as clusters.txt above
+        if(reportClusters){
+            Configuration conf = new Configuration();
+            Job job = Job.getInstance(conf, "KMeans");
+            job.setJarByClass(KMeans.class);
+            job.setMapperClass(MapReportClusters.class);
+            job.setOutputKeyClass(Text.class);
+            job.setOutputValueClass(Text.class);
+
+            // Configure the DistributedCache
+            DistributedCache.addCacheFile(intermediatePath.toUri(), job.getConfiguration());
+            DistributedCache.setLocalFiles(job.getConfiguration(), intermediatePathString);
+
+            // if the output file exists, clear it
+            if (fs.exists(clusterPath)) {
+                fs.delete(clusterPath, true);
+            }
+            FileInputFormat.addInputPath(job, inputPath);
+            FileOutputFormat.setOutputPath(job, clusterPath);
+
+            ret = job.waitForCompletion(true);
+
+            // if the centroids file exists, clear it
+            if (fs.exists(intermediatePath)) {
+                fs.delete(intermediatePath, true);
+            }
+            intermediateStream = fs.create(intermediatePath);
+            FSDataInputStream fis = fs.open(outputPathFile);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+            // close the stream
+            intermediateStream.close();
+            IOUtils.closeStream(reader);
+        }
         fs.close();
 
-
+        System.out.println();
         long endTime = System.currentTimeMillis();
         System.out.println((endTime - startTime) / 1000.0 + " seconds");
 
